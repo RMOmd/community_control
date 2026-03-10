@@ -1,0 +1,5 @@
+.env
+team_activity.db
+__pycache__/
+*.pyc
+venv/
