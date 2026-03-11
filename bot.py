@@ -1,22 +1,32 @@
 import asyncio
 
 from aiogram import Bot, Dispatcher
-from aiogram.types import Message
+from aiogram.types import Message, ChatMemberUpdated
 from aiogram.enums import ChatType
-from admin_panel import router as admin_panel_router
+
 from config import BOT_TOKEN
-from database import init_db, update_activity
+
+from database import (
+    init_db,
+    update_activity,
+    save_chat,
+    add_admin
+)
+
 from scheduler import start_scheduler
+
+from admin_panel import router as admin_panel_router
 from admin_system import router as admin_system_router
 from admin import router as admin_router
 from stats import router as stats_router
-from database import add_admin
+
 
 # создаём объект бота
 bot = Bot(token=BOT_TOKEN)
 
-# диспетчер aiogram
+# диспетчер
 dp = Dispatcher()
+
 
 # подключаем роутеры
 dp.include_router(admin_router)
@@ -25,13 +35,39 @@ dp.include_router(admin_panel_router)
 dp.include_router(admin_system_router)
 
 
-# обработчик всех сообщений (трек активности)
+# событие добавления бота в группу
+@dp.my_chat_member()
+async def bot_added(event: ChatMemberUpdated):
+
+    new_status = event.new_chat_member.status
+
+    if new_status in ["member", "administrator"]:
+
+        chat = event.chat
+
+        if chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
+
+            await save_chat(
+                chat.id,
+                chat.title
+            )
+
+            print(f"Бот добавлен в чат: {chat.title} ({chat.id})")
+
+
+# обработчик сообщений (трек активности)
 @dp.message()
 async def track_activity(message: Message):
 
-    # учитываем только сообщения из групп
+    # только группы
     if message.chat.type not in [ChatType.GROUP, ChatType.SUPERGROUP]:
         return
+
+    # сохраняем чат (если новый)
+    await save_chat(
+        message.chat.id,
+        message.chat.title
+    )
 
     user = message.from_user
 
@@ -56,13 +92,14 @@ async def main():
 
     print("База данных готова")
 
+    # добавить владельца
     await add_admin(
         40916643,
         "owner",
         "owner"
     )
 
-    # запуск планировщика активности
+    # запуск планировщика
     start_scheduler(bot)
 
     print("Планировщик запущен")

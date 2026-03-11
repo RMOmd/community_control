@@ -212,3 +212,40 @@ async def get_all_admins():
         return await cursor.fetchall()
 
 
+async def init_chats_table():
+
+    async with aiosqlite.connect(DB) as db:
+
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS chats(
+            chat_id INTEGER PRIMARY KEY,
+            title TEXT
+        )
+        """)
+
+        await db.commit()
+
+
+async def save_chat(chat_id, title):
+
+    async with aiosqlite.connect(DB) as db:
+
+        await db.execute("""
+        INSERT OR IGNORE INTO chats(chat_id,title)
+        VALUES(?,?)
+        """,(chat_id,title))
+
+        await db.commit()
+
+
+async def get_chats():
+
+    async with aiosqlite.connect(DB) as db:
+
+        cursor = await db.execute(
+            "SELECT chat_id,title FROM chats"
+        )
+
+        return await cursor.fetchall()
+
+
