@@ -148,3 +148,67 @@ async def get_user_stats(user_id):
         )
 
         return await cursor.fetchone()
+
+
+async def init_admin_table():
+
+    async with aiosqlite.connect(DB) as db:
+
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS admins(
+            user_id INTEGER PRIMARY KEY,
+            username TEXT,
+            role TEXT
+        )
+        """)
+
+        await db.commit()
+
+
+async def add_admin(user_id, username, role):
+
+    async with aiosqlite.connect(DB) as db:
+
+        await db.execute("""
+        INSERT OR REPLACE INTO admins(user_id, username, role)
+        VALUES(?,?,?)
+        """,(user_id,username,role))
+
+        await db.commit()
+
+
+async def remove_admin(user_id):
+
+    async with aiosqlite.connect(DB) as db:
+
+        await db.execute(
+            "DELETE FROM admins WHERE user_id=?",
+            (user_id,)
+        )
+
+        await db.commit()
+
+
+async def get_admin(user_id):
+
+    async with aiosqlite.connect(DB) as db:
+
+        cursor = await db.execute(
+            "SELECT role FROM admins WHERE user_id=?",
+            (user_id,)
+        )
+
+        return await cursor.fetchone()
+
+
+async def get_all_admins():
+
+    async with aiosqlite.connect(DB) as db:
+
+        cursor = await db.execute(
+            "SELECT user_id,username,role FROM admins"
+        )
+
+        return await cursor.fetchall()
+
+

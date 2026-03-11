@@ -7,10 +7,10 @@ from admin_panel import router as admin_panel_router
 from config import BOT_TOKEN
 from database import init_db, update_activity
 from scheduler import start_scheduler
-
+from admin_system import router as admin_system_router
 from admin import router as admin_router
 from stats import router as stats_router
-
+from database import add_admin
 
 # создаём объект бота
 bot = Bot(token=BOT_TOKEN)
@@ -22,6 +22,7 @@ dp = Dispatcher()
 dp.include_router(admin_router)
 dp.include_router(stats_router)
 dp.include_router(admin_panel_router)
+dp.include_router(admin_system_router)
 
 
 # обработчик всех сообщений (трек активности)
@@ -54,6 +55,12 @@ async def main():
     await init_db()
 
     print("База данных готова")
+
+    await add_admin(
+        40916643,
+        "owner",
+        "owner"
+    )
 
     # запуск планировщика активности
     start_scheduler(bot)
