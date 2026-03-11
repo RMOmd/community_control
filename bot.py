@@ -3,9 +3,8 @@ import asyncio
 from aiogram import Bot, Dispatcher
 from aiogram.types import Message, ChatMemberUpdated
 from aiogram.enums import ChatType
-
-from config import BOT_TOKEN
-
+from aiogram import F
+from config import BOT_TOKEN, ADMIN_IDS
 from database import (
     init_db,
     update_activity,
@@ -14,7 +13,6 @@ from database import (
 )
 
 from scheduler import start_scheduler
-
 from admin_panel import router as admin_panel_router
 from admin_system import router as admin_system_router
 from admin import router as admin_router
@@ -29,10 +27,10 @@ dp = Dispatcher()
 
 
 # подключаем роутеры
+dp.include_router(admin_system_router)
 dp.include_router(admin_router)
 dp.include_router(stats_router)
 dp.include_router(admin_panel_router)
-dp.include_router(admin_system_router)
 
 
 # событие добавления бота в группу
@@ -56,14 +54,12 @@ async def bot_added(event: ChatMemberUpdated):
 
 
 # обработчик сообщений (трек активности)
-@dp.message()
+@dp.message(~F.text.startswith("/"))
 async def track_activity(message: Message):
 
-    # только группы
     if message.chat.type not in [ChatType.GROUP, ChatType.SUPERGROUP]:
         return
 
-    # сохраняем чат (если новый)
     await save_chat(
         message.chat.id,
         message.chat.title
@@ -74,12 +70,49 @@ async def track_activity(message: Message):
     if not user:
         return
 
-    user_id = user.id
-
     username = user.username or user.first_name or "unknown"
 
-    # обновляем активность
-    await update_activity(user_id, username)
+    await update_activity(user.id, username)
+
+
+@dp.message(lambda m: m.text == "/help")
+async def help_command(message: Message):
+
+    text = """
+📖 Команды бота
+
+👤 Пользовательские:
+/top — топ активных участников
+/stats — статистика пользователя
+/teamstats — статистика чата
+"""
+
+    if message.from_user.id in ADMIN_IDS:
+
+        text += """
+
+🛠 Админские команды
+
+⚙ Настройка предупреждений
+/set_warning 7 — первое предупреждение
+/set_second_warning 14 — второе предупреждение
+/set_kick 30 — удаление за неактивность
+
+✏ Редактирование сообщений
+/set_warning_text текст
+/set_second_warning_text текст
+
+📢 Управление
+/broadcast текст — рассылка пользователям
+/notify текст — сообщение во все группы
+/warn — предупреждение (reply)
+/inactive — список пользователей
+/settings — текущие настройки
+/reset_stats — сброс статистики
+/kickinactive — удалить неактивных
+"""
+
+    await message.answer(text)
 
 
 # запуск бота
@@ -105,6 +138,7 @@ async def main():
     print("Планировщик запущен")
 
     # запуск polling
+    await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
 

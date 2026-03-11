@@ -1,72 +1,102 @@
 from aiogram import Router, F
-from aiogram.types import (
-    Message,
-    CallbackQuery,
-    InlineKeyboardMarkup,
-    InlineKeyboardButton
-)
+from aiogram.types import Message, CallbackQuery
+from aiogram.filters import Command
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.enums import ChatType
 
 from config import ADMIN_IDS
 from database import (
     get_setting,
-    set_setting,
-    get_total_messages,
-    get_users
+    get_setting_text,
+    get_users,
+    get_total_messages
 )
 
 router = Router()
 
 
-def is_admin(user_id: int):
+def is_admin(user_id):
     return user_id in ADMIN_IDS
 
 
-def admin_menu():
+# -------------------------
+# Главное меню админа
+# -------------------------
+@router.message(Command("admin"))
+async def admin_panel(message: Message):
 
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="📊 Статистика",
-                    callback_data="admin_stats"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="⚙ Настройки активности",
-                    callback_data="admin_settings"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="📢 Рассылка",
-                    callback_data="admin_broadcast"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="👥 Пользователи",
-                    callback_data="admin_users"
-                )
-            ]
-        ]
-    )
-
-    return keyboard
-
-
-@router.message(F.text == "/admin")
-async def open_admin_panel(message: Message):
+    if message.chat.type != ChatType.PRIVATE:
+        await message.answer("Напишите эту команду боту в личные сообщения")
+        return
 
     if not is_admin(message.from_user.id):
         return
 
+    kb = InlineKeyboardBuilder()
+
+    kb.button(text="⚙ Настройки", callback_data="admin_settings")
+    kb.button(text="👥 Неактивные", callback_data="admin_inactive")
+    kb.button(text="📊 Статистика", callback_data="admin_stats")
+
+    kb.adjust(1)
+
     await message.answer(
-        "Панель администратора",
-        reply_markup=admin_menu()
+        "⚙ Панель администратора",
+        reply_markup=kb.as_markup()
     )
 
 
+# -------------------------
+# Настройки
+# -------------------------
+@router.callback_query(F.data == "admin_settings")
+async def admin_settings(callback: CallbackQuery):
+
+    warning = await get_setting("warning_days")
+    second_warning = await get_setting("second_warning_days")
+    kick = await get_setting("kick_days")
+
+    kb = InlineKeyboardBuilder()
+
+    kb.button(text="1️⃣ Первое предупреждение", callback_data="set_warning_days")
+    kb.button(text="2️⃣ Второе предупреждение", callback_data="set_second_warning_days")
+    kb.button(text="🚫 Удаление", callback_data="set_kick_days")
+    kb.button(text="✏ Текст 1 предупреждения", callback_data="set_warning_text")
+    kb.button(text="✏ Текст 2 предупреждения", callback_data="set_second_warning_text")
+    kb.button(text="⬅ Назад", callback_data="admin_menu")
+
+    kb.adjust(1)
+
+    text = f"""
+⚙ Настройки активности
+
+1 предупреждение: {warning} дней
+2 предупреждение: {second_warning} дней
+Удаление: {kick} дней
+"""
+
+    await callback.message.edit_text(text, reply_markup=kb.as_markup())
+
+
+# -------------------------
+# Неактивные пользователи
+# -------------------------
+@router.callback_query(F.data == "admin_inactive")
+async def admin_inactive(callback: CallbackQuery):
+
+    users = await get_users()
+
+    text = "👥 Пользователи в базе\n\n"
+
+    for _, username, *_ in users[:20]:
+        text += f"{username}\n"
+
+    await callback.message.edit_text(text)
+
+
+# -------------------------
+# Статистика
+# -------------------------
 @router.callback_query(F.data == "admin_stats")
 async def admin_stats(callback: CallbackQuery):
 
@@ -76,121 +106,8 @@ async def admin_stats(callback: CallbackQuery):
     text = f"""
 📊 Статистика
 
-Пользователей: {len(users)}
-Сообщений: {messages}
+Пользователей в базе: {len(users)}
+Всего сообщений: {messages}
 """
 
-    await callback.message.edit_text(
-        text,
-        reply_markup=admin_menu()
-    )
-
-
-@router.callback_query(F.data == "admin_settings")
-async def admin_settings(callback: CallbackQuery):
-
-    warning = await get_setting("warning_days")
-    kick = await get_setting("kick_days")
-
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="⚠ Предупреждение +1 день",
-                    callback_data="warning_plus"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="❌ Удаление +10 дней",
-                    callback_data="kick_plus"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="⬅ Назад",
-                    callback_data="admin_back"
-                )
-            ]
-        ]
-    )
-
-    await callback.message.edit_text(
-        f"""
-⚙ Настройки активности
-
-Предупреждение: {warning} дней
-Удаление: {kick} дней
-""",
-        reply_markup=keyboard
-    )
-
-
-@router.callback_query(F.data == "warning_plus")
-async def warning_plus(callback: CallbackQuery):
-
-    current = await get_setting("warning_days")
-
-    new_value = current + 1
-
-    await set_setting("warning_days", new_value)
-
-    await callback.answer("Период предупреждения увеличен")
-
-
-@router.callback_query(F.data == "kick_plus")
-async def kick_plus(callback: CallbackQuery):
-
-    current = await get_setting("kick_days")
-
-    new_value = current + 10
-
-    await set_setting("kick_days", new_value)
-
-    await callback.answer("Период удаления увеличен")
-
-
-@router.callback_query(F.data == "admin_users")
-async def admin_users(callback: CallbackQuery):
-
-    users = await get_users()
-
-    text = "👥 Пользователи в базе\n\n"
-
-    for user in users[:20]:
-        text += f"{user[1]}\n"
-
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="⬅ Назад",
-                    callback_data="admin_back"
-                )
-            ]
-        ]
-    )
-
-    await callback.message.edit_text(
-        text,
-        reply_markup=keyboard
-    )
-
-
-@router.callback_query(F.data == "admin_broadcast")
-async def admin_broadcast(callback: CallbackQuery):
-
-    await callback.message.edit_text(
-        "Отправьте сообщение, которое нужно разослать пользователям."
-    )
-
-    await callback.answer()
-
-
-@router.callback_query(F.data == "admin_back")
-async def admin_back(callback: CallbackQuery):
-
-    await callback.message.edit_text(
-        "Панель администратора",
-        reply_markup=admin_menu()
-    )
+    await callback.message.edit_text(text)

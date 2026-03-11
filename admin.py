@@ -1,14 +1,17 @@
-from aiogram import Router
-from aiogram.types import Message
+from aiogram import Router, F
+from aiogram.types import Message, CallbackQuery
+from aiogram.filters import Command
 from datetime import datetime
 import aiosqlite
 
-from config import ADMIN_IDS, CHAT_ID
+from config import ADMIN_IDS
 from database import (
     add_warning,
     get_users,
+    get_chats,
     set_setting,
     get_setting,
+    get_setting_text,
     DB
 )
 
@@ -19,13 +22,22 @@ def is_admin(user_id: int):
     return user_id in ADMIN_IDS
 
 
-@router.message(lambda m: m.text and m.text.startswith("/broadcast"))
+# -------------------------------
+# Рассылка пользователям
+# -------------------------------
+@router.message(Command("broadcast"))
 async def broadcast(message: Message):
 
     if not is_admin(message.from_user.id):
         return
 
-    text = message.text.replace("/broadcast ", "")
+    parts = message.text.split(maxsplit=1)
+
+    if len(parts) < 2:
+        await message.answer("Использование: /broadcast текст")
+        return
+
+    text = parts[1]
 
     users = await get_users()
 
@@ -35,13 +47,16 @@ async def broadcast(message: Message):
         try:
             await message.bot.send_message(user_id, text)
             sent += 1
-        except:
-            pass
+        except Exception as e:
+            print("Broadcast error:", e)
 
     await message.answer(f"Рассылка завершена\nОтправлено: {sent}")
 
 
-@router.message(lambda m: m.text and m.text.startswith("/warn"))
+# -------------------------------
+# Предупреждение пользователю
+# -------------------------------
+@router.message(Command("warn"))
 async def warn_user(message: Message):
 
     if not is_admin(message.from_user.id):
@@ -60,91 +75,213 @@ async def warn_user(message: Message):
     )
 
 
-@router.message(lambda m: m.text and m.text.startswith("/notify"))
+# -------------------------------
+# Сообщение во все группы
+# -------------------------------
+@router.message(Command("notify"))
 async def notify_group(message: Message):
 
     if not is_admin(message.from_user.id):
         return
 
-    text = message.text.replace("/notify ", "")
+    parts = message.text.split(maxsplit=1)
 
-    await message.bot.send_message(CHAT_ID, text)
-
-
-@router.message(lambda m: m.text == "/inactive")
-async def inactive_list(message: Message):
-
-    if not is_admin(message.from_user.id):
+    if len(parts) < 2:
+        await message.answer("Использование: /notify текст")
         return
 
+    text = parts[1]
+
+    chats = await get_chats()
+
+    for chat_id, title in chats:
+        try:
+            await message.bot.send_message(chat_id, text)
+        except Exception as e:
+            print(f"Notify error in {title}:", e)
+
+    await message.delete()
+
+
+# -------------------------------
+# Список неактивных пользователей
+# -------------------------------
+@router.callback_query(F.data == "admin_inactive")
+async def admin_inactive(callback: CallbackQuery):
+
     users = await get_users()
+    warning_days = await get_setting("warning_days")
 
-    text = "Список пользователей:\n\n"
+    now = datetime.utcnow()
 
-    for user in users:
-        text += f"{user[1]}\n"
+    text = "👥 Неактивные пользователи\n\n"
 
-    await message.answer(text)
+    count = 0
+
+    for user_id, username, last_activity, *_ in users:
+
+        try:
+            last_activity = datetime.fromisoformat(last_activity)
+        except:
+            continue
+
+        days = (now - last_activity).days
+
+        if days >= warning_days:
+
+            text += f"{username} — {days} дней\n"
+            count += 1
+
+    if count == 0:
+        text = "Неактивных пользователей нет"
+
+    await callback.message.edit_text(text)
 
 
-@router.message(lambda m: m.text and m.text.startswith("/set_warning"))
+# -------------------------------
+# Настройка первого предупреждения
+# -------------------------------
+@router.message(Command("set_warning"))
 async def set_warning(message: Message):
 
     if not is_admin(message.from_user.id):
         return
 
-    try:
-        days = int(message.text.split()[1])
-    except:
+    parts = message.text.split()
+
+    if len(parts) < 2:
         await message.answer("Использование: /set_warning 7")
         return
 
+    days = int(parts[1])
+
     await set_setting("warning_days", days)
 
-    await message.answer(
-        f"Период предупреждения установлен: {days} дней"
-    )
+    await message.answer(f"Первое предупреждение: {days} дней")
 
 
-@router.message(lambda m: m.text and m.text.startswith("/set_kick"))
+# -------------------------------
+# Настройка второго предупреждения
+# -------------------------------
+@router.message(Command("set_second_warning"))
+async def set_second_warning(message: Message):
+
+    if not is_admin(message.from_user.id):
+        return
+
+    parts = message.text.split()
+
+    if len(parts) < 2:
+        await message.answer("Использование: /set_second_warning 14")
+        return
+
+    days = int(parts[1])
+
+    await set_setting("second_warning_days", days)
+
+    await message.answer(f"Второе предупреждение: {days} дней")
+
+
+# -------------------------------
+# Настройка удаления
+# -------------------------------
+@router.message(Command("set_kick"))
 async def set_kick(message: Message):
 
     if not is_admin(message.from_user.id):
         return
 
-    try:
-        days = int(message.text.split()[1])
-    except:
+    parts = message.text.split()
+
+    if len(parts) < 2:
         await message.answer("Использование: /set_kick 180")
         return
 
+    days = int(parts[1])
+
     await set_setting("kick_days", days)
 
-    await message.answer(
-        f"Период удаления установлен: {days} дней"
-    )
+    await message.answer(f"Удаление пользователей: {days} дней")
 
 
-@router.message(lambda m: m.text == "/settings")
+# -------------------------------
+# Редактирование текста предупреждения
+# -------------------------------
+@router.message(Command("set_warning_text"))
+async def set_warning_text(message: Message):
+
+    if not is_admin(message.from_user.id):
+        return
+
+    parts = message.text.split(maxsplit=1)
+
+    if len(parts) < 2:
+        await message.answer("Использование: /set_warning_text текст")
+        return
+
+    text = parts[1]
+
+    await set_setting("warning_text", text)
+
+    await message.answer("Текст первого предупреждения обновлен")
+
+
+@router.message(Command("set_second_warning_text"))
+async def set_second_warning_text(message: Message):
+
+    if not is_admin(message.from_user.id):
+        return
+
+    parts = message.text.split(maxsplit=1)
+
+    if len(parts) < 2:
+        await message.answer("Использование: /set_second_warning_text текст")
+        return
+
+    text = parts[1]
+
+    await set_setting("second_warning_text", text)
+
+    await message.answer("Текст второго предупреждения обновлен")
+
+
+# -------------------------------
+# Показать настройки
+# -------------------------------
+@router.message(Command("settings"))
 async def show_settings(message: Message):
 
     if not is_admin(message.from_user.id):
         return
 
     warning = await get_setting("warning_days")
+    second_warning = await get_setting("second_warning_days")
     kick = await get_setting("kick_days")
+
+    warning_text = await get_setting_text("warning_text")
+    second_warning_text = await get_setting_text("second_warning_text")
 
     await message.answer(
         f"""
-Настройки активности
+⚙ Настройки активности
 
-Предупреждение: {warning} дней
+1 предупреждение: {warning} дней
+2 предупреждение: {second_warning} дней
 Удаление: {kick} дней
+
+Текст 1 предупреждения:
+{warning_text}
+
+Текст 2 предупреждения:
+{second_warning_text}
 """
     )
 
 
-@router.message(lambda m: m.text == "/reset_stats")
+# -------------------------------
+# Сброс статистики
+# -------------------------------
+@router.message(Command("reset_stats"))
 async def reset_stats(message: Message):
 
     if not is_admin(message.from_user.id):
@@ -157,13 +294,17 @@ async def reset_stats(message: Message):
     await message.answer("Статистика сообщений сброшена")
 
 
-@router.message(lambda m: m.text == "/kickinactive")
+# -------------------------------
+# Удалить неактивных
+# -------------------------------
+@router.message(Command("kickinactive"))
 async def kick_inactive(message: Message):
 
     if not is_admin(message.from_user.id):
         return
 
     users = await get_users()
+    chats = await get_chats()
 
     kick_days = await get_setting("kick_days")
 
@@ -177,10 +318,12 @@ async def kick_inactive(message: Message):
 
         if (now - last_activity).days >= kick_days:
 
-            try:
-                await message.bot.ban_chat_member(CHAT_ID, user_id)
-                kicked += 1
-            except:
-                pass
+            for chat_id, title in chats:
+
+                try:
+                    await message.bot.ban_chat_member(chat_id, user_id)
+                    kicked += 1
+                except Exception as e:
+                    print("Kick error:", e)
 
     await message.answer(f"Удалено пользователей: {kicked}")
